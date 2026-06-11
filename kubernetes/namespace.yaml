@@ -1,0 +1,11 @@
+# Namespace: ai-gateway
+# All Enterprise AI Gateway workloads are deployed into this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-gateway
+  labels:
+    app.kubernetes.io/name: ai-gateway
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+    environment: production

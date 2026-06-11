@@ -1,0 +1,119 @@
+# Deployment: litellm
+# Runs the LiteLLM proxy inside the ai-gateway namespace.
+# Image tag must be pinned before deploying to production.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: ai-gateway
+  labels:
+    app: litellm
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: litellm
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: litellm
+        app.kubernetes.io/name: litellm
+        app.kubernetes.io/part-of: enterprise-ai-gateway
+    spec:
+      serviceAccountName: litellm-sa
+      # Spread pods across availability zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: litellm
+      # Prevent multiple replicas on the same node
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: litellm
+                topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 3000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: litellm
+          # TODO: Pin to a specific semantic version tag before deploying.
+          # Example: ghcr.io/berriai/litellm:main-v1.40.0
+          image: ghcr.io/berriai/litellm:main-latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+          env:
+            - name: AWS_REGION
+              # TODO: Set to the AWS region where Bedrock models are enabled.
+              value: "us-east-1"
+            - name: LITELLM_CONFIG
+              # TODO: Mount from a ConfigMap or set the config path.
+              value: "/app/config.yaml"
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  # TODO: Create a Kubernetes Secret named litellm-secrets
+                  # containing the master key for the LiteLLM admin API.
+                  name: litellm-secrets
+                  key: master-key
+                  optional: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
