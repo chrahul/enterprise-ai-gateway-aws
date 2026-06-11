@@ -1,6 +1,6 @@
 # Deployment: litellm
-# Runs the LiteLLM proxy inside the ai-gateway namespace.
-# Image tag must be pinned before deploying to production.
+# Runs the LiteLLM proxy (v1.88.1) inside the ai-gateway namespace.
+# Image is pinned to a semantic version — see container spec for upgrade instructions.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,10 +57,25 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: litellm
-          # TODO: Pin to a specific semantic version tag before deploying.
-          # Example: ghcr.io/berriai/litellm:main-v1.40.0
-          image: ghcr.io/berriai/litellm:main-latest
-          imagePullPolicy: Always
+          # Image pinning is REQUIRED for production deployments. Using a mutable
+          # tag such as "main-latest" means every pod restart or rollout may pull a
+          # different binary, making deployments non-deterministic and breaking
+          # rollback guarantees. A pinned semantic version ensures:
+          #   1. Reproducible builds — every replica runs the identical binary.
+          #   2. Predictable rollbacks — kubectl rollout undo returns to a known-good image.
+          #   3. Supply-chain auditability — the signed image digest can be verified
+          #      with cosign against the LiteLLM project's public key.
+          #
+          # Version selected: v1.88.1 — latest stable release as of 2026-06-11.
+          # Source: https://github.com/BerriAI/litellm/releases/tag/v1.88.1
+          # Verify signature:
+          #   cosign verify --key https://raw.githubusercontent.com/BerriAI/litellm/v1.88.1/cosign.pub \
+          #     ghcr.io/berriai/litellm:v1.88.1
+          #
+          # To upgrade: update this tag and run:
+          #   kubectl set image deployment/litellm litellm=ghcr.io/berriai/litellm:vX.Y.Z -n ai-gateway
+          image: ghcr.io/berriai/litellm:v1.88.1
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 4000
