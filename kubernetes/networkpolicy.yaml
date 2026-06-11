@@ -1,0 +1,145 @@
+# NetworkPolicy: ai-gateway namespace policies
+#
+# Implements a default-deny ingress posture for the ai-gateway namespace,
+# then selectively allows only the traffic paths required for operation.
+#
+# Policy summary:
+#   1. default-deny-ingress   — Baseline: block all unsolicited inbound traffic.
+#   2. allow-from-ingress     — Permit the ALB / ingress controller to reach LiteLLM.
+#   3. allow-dns-egress       — Allow pods to resolve DNS via kube-dns (UDP/TCP 53).
+#   4. allow-aws-https-egress — Allow pods to reach AWS service endpoints over HTTPS.
+#
+# IMPORTANT: AWS VPC CNI does not enforce NetworkPolicy by default. You must install
+# a CNI network-policy controller before these policies take effect:
+#
+#   Option A (recommended for EKS): Enable the built-in Amazon VPC CNI network
+#   policy support:
+#     aws eks update-addon --cluster-name CLUSTER_NAME \
+#       --addon-name vpc-cni \
+#       --configuration-values '{"enableNetworkPolicy": "true"}'
+#
+#   Option B: Install Calico as a third-party network policy engine:
+#     kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
+#
+# Adjust the ingress controller namespace label below if your cluster uses a
+# different label (e.g. "ingress-nginx" instead of "aws-load-balancer-controller").
+---
+# ── Policy 1: Default-deny all ingress to the ai-gateway namespace ────────────
+# Any pod in the namespace that is NOT explicitly allowed by a subsequent policy
+# will refuse all inbound connections. This enforces least-privilege networking.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector: {}        # Applies to ALL pods in the namespace.
+  policyTypes:
+    - Ingress
+---
+# ── Policy 2: Allow ingress from the ALB / ingress controller namespace ────────
+# The AWS Load Balancer Controller forwards traffic from an ALB target group to
+# LiteLLM pods on port 4000. Pods in the ingress controller's namespace (labeled
+# kubernetes.io/metadata.name: kube-system) must be permitted to reach this port.
+#
+# Adjust the namespaceSelector matchLabels if your ingress controller runs in a
+# dedicated namespace (e.g. ingress-nginx, aws-alb-ingress-system).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-ingress
+  namespace: ai-gateway
+  labels:
+    app: litellm
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector:
+    matchLabels:
+      app: litellm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Allow pods running in the kube-system namespace (ALB controller, CoreDNS).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 4000    # LiteLLM proxy listener port.
+---
+# ── Policy 3: Allow DNS egress so pods can resolve service endpoints ────────────
+# Without this, pods cannot resolve internal Kubernetes service names or public
+# AWS endpoint hostnames (e.g. bedrock-runtime.us-east-1.amazonaws.com).
+# CoreDNS listens on both UDP and TCP port 53 in the kube-system namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector:
+    matchLabels:
+      app: litellm
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        # Target CoreDNS pods in kube-system.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# ── Policy 4: Allow HTTPS egress to AWS service endpoints ─────────────────────
+# LiteLLM must be able to reach:
+#   - Amazon Bedrock Runtime  (bedrock-runtime.REGION.amazonaws.com)
+#   - AWS Secrets Manager     (secretsmanager.REGION.amazonaws.com)
+#   - (Optionally) OpenAI API endpoints — expand the ipBlock or add a separate
+#     policy if direct OpenAI calls are required.
+#
+# Using ipBlock 0.0.0.0/0 with port 443 is a pragmatic approach when VPC
+# endpoints are not in use, because AWS service IPs are not fixed. If your
+# cluster has VPC interface endpoints for Bedrock and Secrets Manager you can
+# restrict this to the endpoint ENI CIDRs for a tighter security posture.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-aws-https-egress
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector:
+    matchLabels:
+      app: litellm
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        # Allow HTTPS traffic to any external IP (AWS service endpoints).
+        # Tighten to specific VPC CIDR or endpoint CIDRs if your threat model
+        # requires it, or use VPC endpoints with the namespaceSelector approach.
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            # Exclude RFC-1918 private address space to prevent lateral
+            # movement to other workloads inside the VPC over HTTPS.
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443    # HTTPS — Bedrock, Secrets Manager, OpenAI, etc.

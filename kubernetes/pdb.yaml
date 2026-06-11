@@ -1,0 +1,32 @@
+# PodDisruptionBudget: litellm-pdb
+#
+# Guarantees that at least one LiteLLM replica is available at all times
+# during voluntary disruptions such as:
+#   - Node drains (cluster upgrades, spot-instance reclamation)
+#   - Cluster autoscaler node removal
+#   - Rolling kubectl delete pod operations
+#
+# minAvailable: 1 works correctly with both the minimum (2) and maximum (10)
+# replica counts defined in the HPA. With 2 replicas running, at most 1 pod
+# can be voluntarily evicted at a time, maintaining 50 % capacity throughout
+# any planned maintenance window.
+#
+# Note: PDBs only restrict *voluntary* disruptions. Involuntary disruptions
+# (node hardware failure, OOMKill) are not covered — rely on the Deployment
+# replicaCount and topologySpreadConstraints for resilience against those.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: litellm-pdb
+  namespace: ai-gateway
+  labels:
+    app: litellm
+    app.kubernetes.io/name: litellm-pdb
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # At least 1 pod must remain available during any voluntary disruption.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: litellm

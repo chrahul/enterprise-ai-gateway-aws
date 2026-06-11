@@ -1,0 +1,68 @@
+# HorizontalPodAutoscaler: litellm
+#
+# Automatically scales the number of LiteLLM pod replicas based on observed
+# CPU and memory utilisation. This ensures the gateway can absorb burst AI
+# inference traffic while staying cost-efficient during quiet periods.
+#
+# Scaling behaviour:
+#   - Scale-up   is allowed as soon as utilisation exceeds either threshold.
+#   - Scale-down is rate-limited to one step per 60 s to prevent thrashing.
+#
+# Tuning guidance:
+#   - CPU 70% is intentionally conservative for latency-sensitive LLM proxying.
+#   - Memory 80% avoids OOMKilled events from large streaming response buffers.
+#   - Adjust stabilizationWindowSeconds if you see excessive scale-in churn.
+#
+# Prerequisites:
+#   - metrics-server must be installed in the cluster.
+#   - For memory-based HPA the metrics-server version must be >= 0.5.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: litellm-hpa
+  namespace: ai-gateway
+  labels:
+    app: litellm
+    app.kubernetes.io/name: litellm-hpa
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: litellm
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # ── CPU metric ──────────────────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Scale out when average CPU across all pods exceeds 70 %.
+          averageUtilization: 70
+    # ── Memory metric ────────────────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          # Scale out when average memory across all pods exceeds 80 %.
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      # React quickly to demand spikes — allow immediate scale-up.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+    scaleDown:
+      # Be conservative on scale-down to avoid prematurely removing pods
+      # that are still serving long-running streaming responses.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
