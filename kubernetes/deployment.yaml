@@ -85,7 +85,7 @@ spec:
               # TODO: Set to the AWS region where Bedrock models are enabled.
               value: "us-east-1"
             - name: LITELLM_CONFIG
-              # TODO: Mount from a ConfigMap or set the config path.
+              # Path where the litellm-config ConfigMap is mounted (see volumes below).
               value: "/app/config.yaml"
             - name: LITELLM_MASTER_KEY
               valueFrom:
@@ -129,6 +129,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: litellm-config
+              # Mounts config.yaml from the litellm-config ConfigMap at the path
+              # the proxy reads on startup. subPath ensures only this one file is
+              # projected — it does not shadow the rest of /app.
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: litellm-config
+          configMap:
+            name: litellm-config
+            # defaultMode 0444 = read-only for owner, group, and other.
+            # The proxy only needs to read the file, never write it.
+            defaultMode: 0444

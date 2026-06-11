@@ -1,0 +1,118 @@
+# ConfigMap: litellm-config
+# Namespace: ai-gateway
+#
+# Injects the LiteLLM proxy configuration into the pod at /app/config.yaml.
+# The Deployment mounts this ConfigMap as a file via a volume + subPath mount.
+#
+# SOURCE OF TRUTH
+# ───────────────
+# The authoritative, fully-commented version of this configuration lives at:
+#   litellm/config.yaml
+#
+# This ConfigMap embeds a compact (comment-stripped) copy of the same settings.
+# Whenever litellm/config.yaml is changed, regenerate this ConfigMap and
+# restart the Deployment:
+#
+#   kubectl create configmap litellm-config \
+#     --from-file=config.yaml=litellm/config.yaml \
+#     --namespace ai-gateway \
+#     --dry-run=client -o yaml \
+#   | kubectl apply -f -
+#
+#   kubectl rollout restart deployment/litellm -n ai-gateway
+#   kubectl rollout status deployment/litellm -n ai-gateway
+#
+# Or simply apply the updated manifest:
+#   kubectl apply -f kubernetes/configmap.yaml
+#   kubectl rollout restart deployment/litellm -n ai-gateway
+#
+# WHY A CONFIGMAP (NOT A SECRET)?
+# ────────────────────────────────
+# This file contains no credentials. It defines model aliases, routing
+# settings, and operational tuning only. Credentials (master key, API keys)
+# are stored in the litellm-secrets Kubernetes Secret, sourced from AWS
+# Secrets Manager at deploy time (see 94-secrets-management-strategy.md).
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: ai-gateway
+  labels:
+    app: litellm
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: enterprise-ai-gateway
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Describes the source file this ConfigMap is generated from.
+    config.source: "litellm/config.yaml"
+    # Increment this version when the embedded config changes so that a
+    # Deployment annotation can trigger a rolling restart automatically
+    # (e.g. via Helm chart-checksum or ArgoCD sync waves).
+    config.version: "1"
+data:
+  # config.yaml is mounted at /app/config.yaml inside the litellm container.
+  # The content below is the functional equivalent of litellm/config.yaml —
+  # comments are stripped to keep the ConfigMap manifest concise and to avoid
+  # encoding issues with extended Unicode box-drawing characters in some tools.
+  # All design rationale is preserved in the source file litellm/config.yaml.
+  config.yaml: |
+    # ──────────────────────────────────────────────────────────────────────────
+    # MODEL LIST
+    # Aliases decouple applications from provider-specific model IDs.
+    # Source of truth: litellm/config.yaml
+    # ──────────────────────────────────────────────────────────────────────────
+    model_list:
+
+      # Claude 3.5 Sonnet via Bedrock — high-capability tier
+      - model_name: claude-sonnet
+        litellm_params:
+          model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+          aws_region_name: us-east-1
+          max_tokens: 4096
+          timeout: 120
+          stream_timeout: 30
+
+      # Claude 3 Haiku via Bedrock — fast/economy tier
+      - model_name: claude-haiku
+        litellm_params:
+          model: bedrock/anthropic.claude-3-haiku-20240307-v1:0
+          aws_region_name: us-east-1
+          max_tokens: 2048
+          timeout: 60
+          stream_timeout: 15
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # ROUTER SETTINGS
+    # ──────────────────────────────────────────────────────────────────────────
+    router_settings:
+      routing_strategy: least-busy
+      num_retries: 3
+      retry_after: 1
+      cooldown_time: 60
+      allow_fallbacks: false
+      timeout: 120
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # LITELLM SETTINGS
+    # ──────────────────────────────────────────────────────────────────────────
+    litellm_settings:
+      drop_params: true
+      set_verbose: false
+      telemetry: false
+      # Observability callbacks — enable when backend is provisioned
+      success_callback: []
+      failure_callback: []
+      request_timeout: 180
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # GENERAL SETTINGS
+    # ──────────────────────────────────────────────────────────────────────────
+    general_settings:
+      # master_key is read from LITELLM_MASTER_KEY env var (injected from
+      # the litellm-secrets Kubernetes Secret at pod startup).
+      master_key: os.environ/LITELLM_MASTER_KEY
+      port: 4000
+      disable_spend_logs: true
+      log_level: INFO
+      health_check_interval: 300
