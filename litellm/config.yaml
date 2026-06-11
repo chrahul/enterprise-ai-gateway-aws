@@ -1,0 +1,250 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LiteLLM Proxy Configuration — Enterprise AI Gateway
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# This file is the single source of truth for which AI models are available
+# through the gateway, how requests are routed between them, and what
+# operational controls apply globally.
+#
+# HOW THIS FILE IS DEPLOYED
+# ─────────────────────────
+# This file is stored in the repository as litellm/config.yaml.
+# It is mounted into the LiteLLM pod at /app/config.yaml via a Kubernetes
+# ConfigMap (kubernetes/configmap.yaml).
+#
+# When you change this file you must:
+#   1. Update the Kubernetes ConfigMap:
+#        kubectl create configmap litellm-config \
+#          --from-file=config.yaml=litellm/config.yaml \
+#          --namespace ai-gateway --dry-run=client -o yaml | kubectl apply -f -
+#   2. Trigger a rolling restart to pick up the new ConfigMap:
+#        kubectl rollout restart deployment/litellm -n ai-gateway
+#
+# HOW TO ADD A NEW MODEL
+# ─────────────────────
+# 1. Add a new entry to model_list below following the same pattern.
+# 2. Choose a short, provider-agnostic model_name (the alias).
+# 3. Set the litellm_params.model to the LiteLLM provider string:
+#      bedrock/<model_id>   — Amazon Bedrock
+#      openai/<model_id>    — OpenAI
+#      anthropic/<model_id> — Direct Anthropic API
+# 4. Update kubernetes/configmap.yaml and restart the deployment.
+# 5. Add the new model to the IAM policy in 95-irsa-and-iam-design.md
+#    if it is a new Bedrock model family requiring explicit model ARN access.
+#
+# CREDENTIALS
+# ───────────
+# This file contains NO credentials. All secrets are injected at runtime:
+#   - LITELLM_MASTER_KEY is read from the litellm-secrets Kubernetes Secret
+#     (sourced from AWS Secrets Manager — see 94-secrets-management-strategy.md)
+#   - AWS credentials are provided via IRSA — no access keys in this file
+#     (see 95-irsa-and-iam-design.md)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MODEL LIST
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# WHY ALIASES?
+# ────────────
+# Each entry has a model_name that is the alias exposed to API consumers,
+# and a litellm_params.model that is the actual provider + model ID.
+#
+# Aliases decouple consuming applications from provider-specific model IDs.
+# When Anthropic releases a new Claude version, you update this config file
+# to point claude-sonnet at the new model ID — consuming applications send
+# the same "claude-sonnet" string and never need to change.
+#
+# This is the same principle as a DNS CNAME: the name is stable, the target
+# can change.
+
+model_list:
+
+  # ── Amazon Bedrock: Claude 3.5 Sonnet ─────────────────────────────────────
+  # Best for: complex reasoning, code generation, document analysis,
+  # multi-step tasks, structured output, tool use.
+  # Cost tier: Higher (use for tasks requiring highest capability)
+  - model_name: claude-sonnet
+    litellm_params:
+      model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      aws_region_name: us-east-1
+      # max_tokens controls the ceiling on output length.
+      # LiteLLM forwards whatever the caller specifies, up to this limit.
+      max_tokens: 4096
+      # timeout applies to the entire request including streaming latency.
+      timeout: 120
+      # stream_timeout applies only to the first byte of a streaming response.
+      stream_timeout: 30
+
+  # ── Amazon Bedrock: Claude 3 Haiku ────────────────────────────────────────
+  # Best for: fast responses, summarisation, classification, lightweight
+  # reasoning, high-volume workloads where cost matters.
+  # Cost tier: Lower (use for high-throughput or latency-sensitive tasks)
+  - model_name: claude-haiku
+    litellm_params:
+      model: bedrock/anthropic.claude-3-haiku-20240307-v1:0
+      aws_region_name: us-east-1
+      max_tokens: 2048
+      timeout: 60
+      stream_timeout: 15
+
+  # ── EXPANSION EXAMPLES (commented out — enable when model access granted) ──
+  #
+  # Amazon Titan Text (AWS native, no Anthropic dependency):
+  # - model_name: titan-text
+  #   litellm_params:
+  #     model: bedrock/amazon.titan-text-express-v1
+  #     aws_region_name: us-east-1
+  #     max_tokens: 4096
+  #     timeout: 60
+  #
+  # Claude 3 Opus (highest capability, highest cost):
+  # - model_name: claude-opus
+  #   litellm_params:
+  #     model: bedrock/anthropic.claude-3-opus-20240229-v1:0
+  #     aws_region_name: us-east-1
+  #     max_tokens: 4096
+  #     timeout: 180
+  #
+  # OpenAI GPT-4o (requires OPENAI_API_KEY in litellm-secrets):
+  # - model_name: gpt-4o
+  #   litellm_params:
+  #     model: openai/gpt-4o
+  #     api_key: os.environ/OPENAI_API_KEY
+  #     max_tokens: 4096
+  #     timeout: 120
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ROUTER SETTINGS
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# WHY ROUTING?
+# ────────────
+# The router is the traffic control layer of the gateway. Even with a single
+# model deployment, the router provides:
+#   - Automatic retry on transient provider errors (429, 503, 500)
+#   - Configurable fallback behaviour between models
+#   - Cooldown periods that prevent hammering a provider during an outage
+#   - Latency-based routing when multiple deployments of the same model exist
+#
+# When a second model family is added (e.g. GPT-4o alongside Claude), the
+# router can fall back to GPT-4o if Bedrock returns errors — transparently,
+# without any change to the calling application.
+
+router_settings:
+  # routing_strategy controls how LiteLLM selects a deployment when multiple
+  # deployments of the same model_name exist (e.g. Bedrock + OpenAI both
+  # serving "claude-sonnet"). Options:
+  #   simple-shuffle      — random selection (default)
+  #   least-busy          — select deployment with fewest active requests
+  #   latency-based-routing — select deployment with lowest recent p50 latency
+  #   usage-based-routing — select deployment with lowest recent token usage
+  routing_strategy: least-busy
+
+  # Number of times to retry a failed request before returning an error.
+  # Retries apply to transient errors only (429 rate limit, 503 unavailable,
+  # 500 server error). Auth errors (403, 401) are not retried.
+  num_retries: 3
+
+  # Seconds to wait between retries. LiteLLM applies exponential backoff:
+  # retry 1 = retry_after, retry 2 = retry_after * 2, etc.
+  retry_after: 1
+
+  # If a deployment returns errors, LiteLLM removes it from rotation for
+  # this many seconds before attempting it again.
+  # Prevents hammering a degraded endpoint.
+  cooldown_time: 60
+
+  # When all retries are exhausted, allow_fallbacks controls whether LiteLLM
+  # attempts a fallback to another model. Set to false to surface the error
+  # to the caller immediately rather than silently routing to a different model.
+  # Set to true when cost or capability fallbacks are acceptable.
+  allow_fallbacks: false
+
+  # Maximum time (seconds) to wait for the first byte of a response.
+  # This is the connection + first-byte timeout, not the total streaming time.
+  timeout: 120
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LITELLM SETTINGS
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Global settings that apply to every request processed by the proxy.
+
+litellm_settings:
+  # drop_params: true silently removes unsupported parameters from requests
+  # rather than returning a 400 error. This improves compatibility when
+  # applications send OpenAI-specific parameters (e.g. logprobs) to providers
+  # that do not support them (e.g. Bedrock).
+  drop_params: true
+
+  # set_verbose: false reduces log verbosity. Set to true for debugging.
+  set_verbose: false
+
+  # telemetry: false disables anonymous usage telemetry to LiteLLM.
+  telemetry: false
+
+  # success_callback: list of callback handlers to invoke on successful requests.
+  # Supported: langfuse, langsmith, datadog, prometheus, s3, dynamodb, etc.
+  # Leave empty until the observability backend is provisioned.
+  # Example (Langfuse):
+  #   success_callback: ["langfuse"]
+  #   LANGFUSE_PUBLIC_KEY: os.environ/LANGFUSE_PUBLIC_KEY
+  #   LANGFUSE_SECRET_KEY: os.environ/LANGFUSE_SECRET_KEY
+  success_callback: []
+  # success_callback: ["langfuse"]   # Uncomment when Langfuse is deployed
+
+  # failure_callback: list of callback handlers to invoke on failed requests.
+  # Useful for alerting and error tracking (e.g. Datadog, Sentry).
+  failure_callback: []
+  # failure_callback: ["datadog"]    # Uncomment when Datadog agent is deployed
+
+  # request_timeout applies as a hard ceiling on any request, overriding
+  # per-model timeout values. Prevents runaway long-running requests.
+  request_timeout: 180
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GENERAL SETTINGS
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Controls the LiteLLM proxy server behaviour (port, auth, logging).
+
+general_settings:
+  # master_key is the API key that authenticates all requests to this proxy.
+  # os.environ/LITELLM_MASTER_KEY tells LiteLLM to read the value from the
+  # LITELLM_MASTER_KEY environment variable, which is injected from the
+  # litellm-secrets Kubernetes Secret at pod startup.
+  # NEVER hardcode this value here.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # The port LiteLLM listens on inside the container.
+  # The Kubernetes Service maps port 80 → 4000.
+  # The health probe in the Deployment checks /health on port 4000.
+  port: 4000
+
+  # database_url: connection string for the LiteLLM usage/spend tracking DB.
+  # Required if you want per-key, per-team token usage tracking and budgets.
+  # Leave commented out until a PostgreSQL/RDS instance is provisioned.
+  # Example: postgresql://user:pass@hostname:5432/litellm
+  # database_url: os.environ/DATABASE_URL
+
+  # store_model_in_db: set to true when database_url is configured.
+  # Enables the LiteLLM Admin UI to create/manage model deployments via the DB.
+  # store_model_in_db: true
+
+  # disable_spend_logs: true skips writing per-request spend records to the DB.
+  # Set to true if you are not using the spend tracking feature.
+  disable_spend_logs: true
+
+  # Proxy server logging level.
+  # Options: DEBUG, INFO, WARNING, ERROR
+  # Use DEBUG only for troubleshooting — it logs full request/response bodies.
+  log_level: INFO
+
+  # health_check_interval: seconds between internal model health checks.
+  # LiteLLM periodically pings configured models to verify they are reachable.
+  health_check_interval: 300
