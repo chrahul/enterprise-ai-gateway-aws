@@ -1,0 +1,170 @@
+# =============================================================================
+# Enterprise AI Gateway — .gitignore
+# =============================================================================
+# This file prevents accidental commits of credentials, generated artifacts,
+# editor state, and OS noise. Every section is annotated with its rationale.
+#
+# SECURITY NOTE: Never commit secrets, keys, tokens, or kubeconfigs.
+# If a secret is accidentally committed, treat it as compromised immediately:
+#   1. Rotate the credential.
+#   2. Use `git filter-repo` to purge it from history.
+#   3. Force-push and notify all collaborators.
+# =============================================================================
+
+
+# =============================================================================
+# PYTHON
+# Excludes compiled bytecode and virtual environment directories.
+# Bytecode is machine-specific and regenerated automatically; committing it
+# causes spurious diffs and cross-platform compatibility problems.
+# Virtual environments contain OS-specific binaries and should be recreated
+# from requirements files, not checked into source control.
+# =============================================================================
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+
+# =============================================================================
+# VS CODE
+# Editor workspace settings and extension state are personal to each developer.
+# Committing .vscode/ overrides teammates' preferences and can expose local
+# paths or extension configurations.
+# Exception: .vscode/extensions.json (recommended extensions) and
+# .vscode/settings.json (project-level formatter settings) may be committed
+# by choice — remove them from this pattern if your team uses them.
+# =============================================================================
+.vscode/
+*.code-workspace
+
+
+# =============================================================================
+# AWS
+# Prevents committing AWS credentials, SSH private keys, and kubeconfig files.
+# An accidentally committed AWS credential can result in account takeover
+# within minutes (automated scanners monitor public repositories in real time).
+# kubeconfig files contain cluster API server addresses and authentication
+# tokens that grant kubectl access to the cluster.
+# =============================================================================
+.aws/
+*.pem
+*.key
+kubeconfig
+*.kubeconfig
+aws-exports.js
+.aws-sam/
+
+
+# =============================================================================
+# KUBERNETES — SECRETS
+# Kubernetes Secret manifests contain base64-encoded credentials.
+# Base64 is encoding, not encryption — it provides zero security.
+# Patterns below catch common naming conventions for secret files.
+# The canonical secrets reference for this repo is litellm/secrets-example.yaml
+# (contains only placeholders, safe to commit).
+# =============================================================================
+*.secret.yaml
+*.secret.yml
+secrets.yaml
+secrets.yml
+*-secret.yaml
+*-secret.yml
+*-secrets.yaml
+*-secrets.yml
+
+
+# =============================================================================
+# TERRAFORM
+# State files contain plaintext representations of all managed infrastructure,
+# including sensitive values (passwords, private IPs, resource IDs).
+# The .terraform/ directory contains provider binaries and cached modules —
+# large, platform-specific, and fully reproducible via `terraform init`.
+# Use a remote backend (S3 + DynamoDB, or Terraform Cloud) for state storage.
+# =============================================================================
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+
+# =============================================================================
+# OPERATING SYSTEMS
+# OS-generated metadata files serve no purpose in a shared repository and
+# cause noise in pull requests for developers on different platforms.
+# =============================================================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+
+# =============================================================================
+# LOGS
+# Log files grow unboundedly and contain runtime-specific data (timestamps,
+# PIDs, request IDs) that differs on every run. They are runtime artifacts,
+# not source code. Ship logs to CloudWatch or your observability backend.
+# =============================================================================
+*.log
+*.log.*
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+# =============================================================================
+# ENVIRONMENT FILES
+# .env files frequently contain API keys, database URLs, and other secrets.
+# They must never be committed, even in development.
+# Use litellm/secrets-example.yaml as the reference for expected variables.
+# The only safe pattern: commit a .env.example with placeholder values only.
+# =============================================================================
+.env
+.env.*
+!.env.example
+!.env.sample
+
+
+# =============================================================================
+# TEMPORARY FILES
+# Scratch directories and editor swap files are transient working state.
+# =============================================================================
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+.cache/
