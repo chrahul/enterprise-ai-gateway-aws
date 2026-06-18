@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# terraform.tfvars.example — Example variable values for the lab environment
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# USAGE
+# ─────
+# Copy this file to terraform.tfvars before running terraform commands:
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Then adjust any values that differ from your environment. The defaults
+# below are already configured for the lab environment described in the docs.
+#
+# IMPORTANT — DO NOT COMMIT terraform.tfvars
+# ──────────────────────────────────────────
+# terraform.tfvars is listed in .gitignore because it may contain
+# environment-specific values. Only this example file (with safe defaults)
+# is committed to source control.
+#
+# CREDENTIALS
+# ───────────
+# Never store AWS credentials in this file. The AWS provider reads credentials
+# from the standard chain. For lab use, the simplest approach is:
+#
+#   Option A — Named profile (recommended):
+#     aws configure --profile ai-gateway-lab
+#     export AWS_PROFILE=ai-gateway-lab
+#
+#   Option B — Environment variables:
+#     export AWS_ACCESS_KEY_ID="AKIA..."
+#     export AWS_SECRET_ACCESS_KEY="..."
+#     export AWS_SESSION_TOKEN="..."   # required for temporary credentials
+#
+#   Option C — AWS SSO:
+#     aws sso login --profile ai-gateway-lab
+#     export AWS_PROFILE=ai-gateway-lab
+#
+# WORKFLOW
+# ────────
+#   terraform init       # download providers, initialise backend
+#   terraform validate   # check configuration syntax
+#   terraform plan       # preview changes — review before applying
+#   terraform apply      # create resources (requires confirmation)
+#   terraform destroy    # tear down all resources when done with the lab
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── AWS / Region ──────────────────────────────────────────────────────────────
+
+# AWS region for all resources.
+# us-east-1 provides the broadest Bedrock model availability.
+aws_region = "us-east-1"
+
+
+# ── Naming and Tagging ────────────────────────────────────────────────────────
+
+# Deployment environment. Used in tags and resource names.
+# Must be one of: lab, staging, prod.
+environment = "lab"
+
+# Project name applied to all resource tags for cost allocation.
+project = "enterprise-ai-gateway"
+
+
+# ── EKS Cluster ───────────────────────────────────────────────────────────────
+
+# EKS cluster name. Also used as a prefix for IAM roles and the log group.
+cluster_name = "ai-gateway-lab"
+
+# Kubernetes version for the EKS control plane.
+# Verify current supported versions before changing:
+# https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
+kubernetes_version = "1.32"
+
+# EKS control plane log types sent to CloudWatch Logs.
+# All five are enabled for full lab observability.
+cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+
+# CloudWatch Logs retention for EKS control plane logs (days).
+# 7 days balances observability with log storage cost in a lab.
+cloudwatch_retention_days = 7
+
+
+# ── Networking ────────────────────────────────────────────────────────────────
+
+# VPC CIDR block. Change this if 10.0.0.0/16 conflicts with existing VPCs
+# in your account (e.g., if you plan to use VPC peering in the future).
+vpc_cidr = "10.0.0.0/16"
+
+# Availability zones for subnet placement.
+# Both AZs must be in the same region as aws_region.
+availability_zones = ["us-east-1a", "us-east-1b"]
+
+# Public subnet CIDRs — one per AZ, in the same order as availability_zones.
+public_subnet_cidrs = ["10.0.0.0/24", "10.0.1.0/24"]
+
+# Private subnet CIDRs — one per AZ, in the same order as availability_zones.
+# Worker nodes run exclusively in private subnets.
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+
+
+# ── EKS Node Group ────────────────────────────────────────────────────────────
+
+# EC2 instance type for worker nodes.
+# t3.small (2 vCPU, 2 GiB RAM) is the lab minimum.
+# For production: m5.large (2 vCPU, 8 GiB) or c5.large (2 vCPU, 4 GiB).
+node_instance_type = "t3.small"
+
+# Desired number of worker nodes at steady state.
+node_desired_size = 2
+
+# Minimum number of worker nodes (autoscaler lower bound).
+node_min_size = 2
+
+# Maximum number of worker nodes (autoscaler upper bound).
+node_max_size = 4
