@@ -168,3 +168,16 @@ temp/
 *.swo
 *~
 .cache/
+secrets.json
+# Local testing files
+pod.yaml
+terraform/tfplan
+
+# Secrets
+secrets.json
+
+# Terraform state
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.backup

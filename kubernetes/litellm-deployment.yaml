@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: litellm
+  namespace: ai-gateway
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: litellm
+
+  template:
+    metadata:
+      labels:
+        app: litellm
+
+    spec:
+      serviceAccountName: litellm-sa
+
+      containers:
+      - name: litellm
+        image: ghcr.io/berriai/litellm:main-stable
+
+        command:
+        - litellm
+        - --config
+        - /app/config.yaml
+
+        ports:
+        - containerPort: 4000
+
+        env:
+        - name: AWS_REGION
+          value: us-east-1
+
+        - name: LITELLM_MASTER_KEY
+          value: Rahul-AIGateway-2026!
+
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: litellm-provider-secrets
+              key: OPENAI_API_KEY
+
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: litellm-provider-secrets
+              key: ANTHROPIC_API_KEY
+
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+
+      volumes:
+      - name: config-volume
+        configMap:
+          name: litellm-config
